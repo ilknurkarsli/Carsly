@@ -12,10 +12,10 @@ namespace AuctionService.Data
         public static void InitDb(WebApplication app)
         {
             using var scope = app.Services.CreateScope();
-            SeedData(scope.ServiceProvider.GetService<AutionDbContext>());
+            SeedData(scope.ServiceProvider.GetService<AuctionDbContext>());
         }
 
-        private static void SeedData(AutionDbContext context)
+        private static void SeedData(AuctionDbContext context)
         {
             context.Database.Migrate();
             if (context.Auctions.Any())

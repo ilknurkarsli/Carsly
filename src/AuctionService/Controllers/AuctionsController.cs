@@ -7,6 +7,8 @@ using AuctionService.DTOs;
 using AuctionService.Entities;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Contracts;
+using MassTransit;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,11 +18,13 @@ namespace AuctionService.Controllers
     [Route("api/auctions")]
     public class AuctionsController : ControllerBase
     {
-        private readonly AutionDbContext _context;
+        private readonly AuctionDbContext _context;
         private readonly IMapper _mapper;
+        private readonly IPublishEndpoint _publishEndpoint;
 
-        public AuctionsController(AutionDbContext context, IMapper mapper)
+        public AuctionsController(AuctionDbContext context, IMapper mapper, IPublishEndpoint publishEndpoint)
         {
+            this._publishEndpoint = publishEndpoint;
             this._context = context;
             this._mapper = mapper;
         }
@@ -51,9 +55,16 @@ namespace AuctionService.Controllers
             auction.Seller = "testuser";
 
             _context.Auctions.Add(auction);
+            
+            //MassTransit kullanarak “AuctionCreated” adlı bir event gönderiyoruz
+            //Yeni bir auction oluşturuldu!” bilgisini sistemin diğer mikroservislerine yani SearchService e gönderiyoruz.
+            var newAuction = _mapper.Map<AuctionDto>(auction);
+            await _publishEndpoint.Publish(_mapper.Map<AuctionCreated>(newAuction));
+
             var result = await _context.SaveChangesAsync() > 0;
+
             if (!result) return BadRequest("Failed to save changes to auction database");
-            return CreatedAtAction(nameof(GetAuctionById), new { id = auction.Id }, _mapper.Map<AuctionDto>(auction));
+            return CreatedAtAction(nameof(GetAuctionById), new { id = auction.Id },newAuction);
 
         }
         [HttpPut("{id}")]
@@ -69,19 +80,28 @@ namespace AuctionService.Controllers
             auction.Item.Mileage = updateAuctionDto.Mileage ?? auction.Item.Mileage;
             auction.Item.Year = updateAuctionDto.Year ?? auction.Item.Year;
 
+            //MassTransit kullanarak “AuctionUpdated” adlı bir event gönderiyoruz
+            //Bir auction güncellendi!” bilgisini sistemin diğer mikroservislerine yani SearchService e gönderiyoruz.
+            await _publishEndpoint.Publish(_mapper.Map<AuctionUpdated>(auction));
+
             var result = await _context.SaveChangesAsync() > 0;
             if (result) return Ok();
             return BadRequest("Failed saving changes to auction database");
 
         }
         [HttpDelete("{id}")]
-        public async Task<ActionResult> DleteAuction(Guid id)
+        public async Task<ActionResult> DeleteAuction(Guid id)
         {
             var auction = await _context.Auctions.FindAsync(id);
             if (auction == null) return NotFound();
-            
+
             //todo: check seller == username
             _context.Auctions.Remove(auction);
+
+            //MassTransit kullanarak “AuctionDeleted” adlı bir event gönderiyoruz
+            //Bir auction silindi!” bilgisini sistemin diğer mikroservislerine yani SearchService
+            await _publishEndpoint.Publish<AuctionDeleted>( new { Id = auction.Id.ToString() });
+            
             var result = await _context.SaveChangesAsync() > 0;
             if (result) return Ok();
             return BadRequest("Failed to delete the auction from database");
